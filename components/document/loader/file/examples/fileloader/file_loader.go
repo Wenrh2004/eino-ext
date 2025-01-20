@@ -20,7 +20,11 @@ import (
 	"context"
 	"log"
 
+	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components/document"
+	"github.com/cloudwego/eino/compose"
+	"github.com/cloudwego/eino/schema"
+	callbacksHelper "github.com/cloudwego/eino/utils/callbacks"
 
 	"github.com/cloudwego/eino-ext/components/document/loader/file"
 )
@@ -28,6 +32,7 @@ import (
 func main() {
 	ctx := context.Background()
 
+	log.Printf("===== call File Loader directly =====")
 	// 初始化 loader (以file loader为例)
 	loader, err := file.NewFileLoader(ctx, &file.FileLoaderConfig{
 		// 配置参数
@@ -47,4 +52,40 @@ func main() {
 	}
 
 	log.Printf("doc content: %v", docs[0].Content)
+
+	log.Printf("===== call File Loader in Chain =====")
+	// 创建 callback handler
+	handler := &callbacksHelper.LoaderCallbackHandler{
+		OnStart: func(ctx context.Context, info *callbacks.RunInfo, input *document.LoaderCallbackInput) context.Context {
+			log.Printf("start loading docs...: %s\n", input.Source.URI)
+			return ctx
+		},
+		OnEnd: func(ctx context.Context, info *callbacks.RunInfo, output *document.LoaderCallbackOutput) context.Context {
+			log.Printf("complete loading docs，total loaded docs: %d\n", len(output.Docs))
+			return ctx
+		},
+		// OnError
+	}
+
+	// 使用 callback handler
+	helper := callbacksHelper.NewHandlerHelper().
+		Loader(handler).
+		Handler()
+
+	chain := compose.NewChain[document.Source, []*schema.Document]()
+	chain.AppendLoader(loader)
+	// 在运行时使用
+	run, err := chain.Compile(ctx)
+	if err != nil {
+		log.Fatalf("chain.Compile failed, err=%v", err)
+	}
+
+	outDocs, err := run.Invoke(ctx, document.Source{
+		URI: filePath,
+	}, compose.WithCallbacks(helper))
+	if err != nil {
+		log.Fatalf("run.Invoke failed, err=%v", err)
+	}
+
+	log.Printf("doc content: %v", outDocs[0].Content)
 }
