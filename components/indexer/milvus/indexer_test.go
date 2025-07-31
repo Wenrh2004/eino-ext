@@ -409,3 +409,762 @@ func TestIndexer_Store(t *testing.T) {
 		})
 	})
 }
+
+func TestIndexer_getSchema(t *testing.T) {
+	PatchConvey("test getSchema ", t, func() {
+
+		PatchConvey("All parameters provided", func() {
+			defaultFields := getDefaultFields()
+			mockConf := &IndexerConfig{
+				Collection:  defaultCollection,
+				Description: "the collection for eino",
+				Fields:      defaultFields,
+			}
+			schema := mockConf.getSchema(mockConf.Collection, mockConf.Description, mockConf.Fields)
+			convey.So(schema, convey.ShouldNotBeNil)
+			convey.So(schema.CollectionName, convey.ShouldEqual, defaultCollection)
+			convey.So(schema.Description, convey.ShouldEqual, "the collection for eino")
+			convey.So(schema.Fields, convey.ShouldResemble, defaultFields)
+		})
+		PatchConvey("Collection not provided", func() {
+			defaultFields := getDefaultFields()
+			mockConf := &IndexerConfig{
+				Description: "the collection for eino",
+				Fields:      defaultFields,
+			}
+			schema := mockConf.getSchema(mockConf.Collection, mockConf.Description, mockConf.Fields)
+			convey.So(schema, convey.ShouldNotBeNil)
+			convey.So(schema.CollectionName, convey.ShouldEqual, "")
+			convey.So(schema.Description, convey.ShouldEqual, "the collection for eino")
+			convey.So(schema.Fields, convey.ShouldResemble, defaultFields)
+		})
+		PatchConvey("Fields not provided", func() {
+			mockConf := &IndexerConfig{
+				Collection:  "eino_collection",
+				Description: "the collection for eino",
+			}
+			schema := mockConf.getSchema(mockConf.Collection, mockConf.Description, mockConf.Fields)
+			convey.So(schema, convey.ShouldNotBeNil)
+			convey.So(schema.CollectionName, convey.ShouldEqual, "eino_collection")
+			convey.So(schema.Description, convey.ShouldEqual, "the collection for eino")
+			convey.So(schema.Fields, convey.ShouldBeNil)
+		})
+		PatchConvey("Description not provided", func() {
+			defaultFields := getDefaultFields()
+			mockConf := &IndexerConfig{
+				Collection: "eino_collection",
+				Fields:     defaultFields,
+			}
+			schema := mockConf.getSchema(mockConf.Collection, mockConf.Description, mockConf.Fields)
+			convey.So(schema, convey.ShouldNotBeNil)
+			convey.So(schema.CollectionName, convey.ShouldEqual, "eino_collection")
+			convey.So(schema.Description, convey.ShouldEqual, "")
+			convey.So(schema.Fields, convey.ShouldResemble, defaultFields)
+		})
+	})
+}
+
+func TestIndexer_getDefaultDocumentConvert(t *testing.T) {
+	PatchConvey("test getDefaultDocumentConvert", t, func() {
+		ctx := context.Background()
+
+		PatchConvey("test convert documents with valid input", func() {
+			docs := []*schema.Document{
+				{
+					ID:       "doc1",
+					Content:  "This is document 1",
+					MetaData: map[string]interface{}{"key1": "value1"},
+				},
+				{
+					ID:       "doc2",
+					Content:  "This is document 2",
+					MetaData: map[string]interface{}{"key2": "value2", "number": 42},
+				},
+			}
+
+			vectors := [][]float64{
+				{0.1, 0.2, 0.3},
+				{0.4, 0.5, 0.6},
+			}
+
+			mockConf := &IndexerConfig{}
+			converter := mockConf.getDefaultDocumentConvert()
+			rows, err := converter(ctx, docs, vectors)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(rows, convey.ShouldNotBeNil)
+			convey.So(len(rows), convey.ShouldEqual, 2)
+
+			row1, ok := rows[0].(*defaultSchema)
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(row1.ID, convey.ShouldEqual, "doc1")
+			convey.So(row1.Content, convey.ShouldEqual, "This is document 1")
+			convey.So(row1.Vector, convey.ShouldNotBeNil)
+
+			row2, ok := rows[1].(*defaultSchema)
+			convey.So(ok, convey.ShouldBeTrue)
+			convey.So(row2.ID, convey.ShouldEqual, "doc2")
+			convey.So(row2.Content, convey.ShouldEqual, "This is document 2")
+			convey.So(row2.Vector, convey.ShouldNotBeNil)
+		})
+
+		PatchConvey("test convert documents with empty input", func() {
+			var docs []*schema.Document
+			var vectors [][]float64
+
+			mockConf := &IndexerConfig{}
+			converter := mockConf.getDefaultDocumentConvert()
+			rows, err := converter(ctx, docs, vectors)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(rows, convey.ShouldNotBeNil)
+			convey.So(len(rows), convey.ShouldEqual, 0)
+		})
+
+		PatchConvey("test convert documents with invalid metadata", func() {
+			ch := make(chan int)
+
+			docs := []*schema.Document{
+				{
+					ID:       "doc1",
+					Content:  "This is document 1",
+					MetaData: map[string]interface{}{"key1": ch},
+				},
+			}
+
+			vectors := [][]float64{{0.1, 0.2, 0.3}}
+
+			mockConf := &IndexerConfig{}
+			converter := mockConf.getDefaultDocumentConvert()
+			rows, err := converter(ctx, docs, vectors)
+
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(rows, convey.ShouldBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "failed to marshal metadata")
+		})
+
+		PatchConvey("test convert documents with nil vectors", func() {
+			docs := []*schema.Document{
+				{
+					ID:       "doc1",
+					Content:  "This is document 1",
+					MetaData: map[string]interface{}{"key1": "value1"},
+				},
+			}
+
+			var vectors [][]float64 = nil
+
+			mockConf := &IndexerConfig{}
+			converter := mockConf.getDefaultDocumentConvert()
+			rows, err := converter(ctx, docs, vectors)
+
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(rows, convey.ShouldNotBeNil)
+			convey.So(len(rows), convey.ShouldEqual, 0)
+		})
+	})
+}
+
+func TestIndexer_createdDefaultIndex(t *testing.T) {
+	PatchConvey("test createdDefaultIndex", t, func() {
+		ctx := context.Background()
+
+		PatchConvey("test create default index with valid config", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(ctx, client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Collection: defaultCollection,
+				MetricType: defaultMetricType,
+			}
+
+			// Mock the CreateIndex method to return nil (success)
+			Mock(GetMethod(mockClient, "CreateIndex")).Return(nil).Build()
+
+			err := mockConf.createdDefaultIndex(ctx, false)
+			convey.So(err, convey.ShouldBeNil)
+		})
+
+		PatchConvey("test create default index with async mode", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(ctx, client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Collection: defaultCollection,
+				MetricType: defaultMetricType,
+			}
+			Mock(GetMethod(mockClient, "CreateIndex")).Return(nil).Build()
+
+			err := mockConf.createdDefaultIndex(ctx, true)
+			convey.So(err, convey.ShouldBeNil)
+		})
+
+		PatchConvey("test create default index with invalid metric type", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(ctx, client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Collection: defaultCollection,
+				MetricType: "INVALID_METRIC_TYPE",
+			}
+
+			err := mockConf.createdDefaultIndex(ctx, false)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "[NewIndexer] failed to create index")
+		})
+
+		PatchConvey("test create default index with client error", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(ctx, client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Collection: defaultCollection,
+				MetricType: defaultMetricType,
+			}
+			Mock(GetMethod(mockClient, "CreateIndex")).Return(fmt.Errorf("create index error")).Build()
+			err := mockConf.createdDefaultIndex(ctx, false)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "[NewIndexer] failed to create index")
+			convey.So(err.Error(), convey.ShouldContainSubstring, "create index error")
+		})
+	})
+}
+
+func TestIndexer_checkCollectionSchema(t *testing.T) {
+	PatchConvey("test checkCollectionSchema", t, func() {
+
+		PatchConvey("test schema fields count not match", func() {
+			mockConf := &IndexerConfig{}
+			schema := &entity.Schema{
+				Fields: []*entity.Field{
+					{
+						Name:     "field1",
+						DataType: entity.FieldTypeInt64,
+					},
+				},
+			}
+			fields := []*entity.Field{
+				{
+					Name:     "field1",
+					DataType: entity.FieldTypeInt64,
+				},
+				{
+					Name:     "field2",
+					DataType: entity.FieldTypeFloat,
+				},
+			}
+			result := mockConf.checkCollectionSchema(schema, fields)
+			convey.So(result, convey.ShouldBeFalse)
+		})
+
+		PatchConvey("test schema fields count match but name not match", func() {
+			mockConf := &IndexerConfig{}
+			schema := &entity.Schema{
+				Fields: []*entity.Field{
+					{
+						Name:     "field1",
+						DataType: entity.FieldTypeInt64,
+					},
+					{
+						Name:     "field2",
+						DataType: entity.FieldTypeFloat,
+					},
+				},
+			}
+			fields := []*entity.Field{
+				{
+					Name:     "field1",
+					DataType: entity.FieldTypeInt64,
+				},
+				{
+					Name:     "field3",
+					DataType: entity.FieldTypeFloat,
+				},
+			}
+			result := mockConf.checkCollectionSchema(schema, fields)
+			convey.So(result, convey.ShouldBeFalse)
+		})
+
+		PatchConvey("test schema fields count match but data type not match", func() {
+			mockConf := &IndexerConfig{}
+			schema := &entity.Schema{
+				Fields: []*entity.Field{
+					{
+						Name:     "field1",
+						DataType: entity.FieldTypeInt64,
+					},
+					{
+						Name:     "field2",
+						DataType: entity.FieldTypeFloat,
+					},
+				},
+			}
+			fields := []*entity.Field{
+				{
+					Name:     "field1",
+					DataType: entity.FieldTypeInt64,
+				},
+				{
+					Name:     "field2",
+					DataType: entity.FieldTypeDouble,
+				},
+			}
+			result := mockConf.checkCollectionSchema(schema, fields)
+			convey.So(result, convey.ShouldBeFalse)
+		})
+
+		PatchConvey("test schema fields match exactly", func() {
+			mockConf := &IndexerConfig{}
+			schema := &entity.Schema{
+				Fields: []*entity.Field{
+					{
+						Name:     "field1",
+						DataType: entity.FieldTypeInt64,
+					},
+					{
+						Name:     "field2",
+						DataType: entity.FieldTypeFloat,
+					},
+				},
+			}
+			fields := []*entity.Field{
+				{
+					Name:     "field1",
+					DataType: entity.FieldTypeInt64,
+				},
+				{
+					Name:     "field2",
+					DataType: entity.FieldTypeFloat,
+				},
+			}
+			result := mockConf.checkCollectionSchema(schema, fields)
+			convey.So(result, convey.ShouldBeTrue)
+		})
+
+		PatchConvey("test empty schema and fields", func() {
+			mockConf := &IndexerConfig{}
+			schema := &entity.Schema{
+				Fields: []*entity.Field{},
+			}
+			var fields []*entity.Field
+			result := mockConf.checkCollectionSchema(schema, fields)
+			convey.So(result, convey.ShouldBeTrue)
+		})
+	})
+}
+
+func TestIndexer_loadCollection(t *testing.T) {
+	PatchConvey("test loadCollection", t, func() {
+		ctx := context.Background()
+
+		PatchConvey("test load collection when load state is LoadStateNotExist", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(ctx, client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Collection: defaultCollection,
+			}
+
+			// 模拟获取加载状态返回LoadStateNotExist
+			Mock(GetMethod(mockClient, "GetLoadState")).Return(entity.LoadStateNotExist, nil).Build()
+
+			err := mockConf.loadCollection(ctx)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldEqual, "[NewIndexer] collection not exist")
+		})
+
+		PatchConvey("test load collection when load state is LoadStateNotLoad and no index exists", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(ctx, client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Collection: defaultCollection,
+				MetricType: defaultMetricType,
+			}
+
+			// 模拟获取加载状态返回LoadStateNotLoad
+			Mock(GetMethod(mockClient, "GetLoadState")).Return(entity.LoadStateNotLoad, nil).Build()
+
+			// 模拟描述索引返回空列表
+			Mock(GetMethod(mockClient, "DescribeIndex")).Return([]entity.Index{}, nil).Build()
+
+			// 模拟创建索引成功
+			Mock(GetMethod(mockClient, "CreateIndex")).Return(nil).Build()
+
+			// 模拟加载集合成功
+			Mock(GetMethod(mockClient, "LoadCollection")).Return(nil).Build()
+
+			err := mockConf.loadCollection(ctx)
+			convey.So(err, convey.ShouldBeNil)
+		})
+
+		PatchConvey("test load collection when load state is LoadStateNotLoad and index exists", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(ctx, client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Collection: defaultCollection,
+			}
+
+			// 模拟获取加载状态返回LoadStateNotLoad
+			Mock(GetMethod(mockClient, "GetLoadState")).Return(entity.LoadStateNotLoad, nil).Build()
+
+			// 模拟描述索引返回已有索引
+			Mock(GetMethod(mockClient, "DescribeIndex")).Return([]entity.Index{
+				entity.NewGenericIndex("vector", entity.AUTOINDEX, nil),
+			}, nil).Build()
+
+			// 模拟加载集合成功
+			Mock(GetMethod(mockClient, "LoadCollection")).Return(nil).Build()
+
+			err := mockConf.loadCollection(ctx)
+			convey.So(err, convey.ShouldBeNil)
+		})
+
+		PatchConvey("test load collection when load state is LoadStateNotLoad and create index failed", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(ctx, client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Collection: defaultCollection,
+				MetricType: defaultMetricType,
+			}
+
+			// 模拟获取加载状态返回LoadStateNotLoad
+			Mock(GetMethod(mockClient, "GetLoadState")).Return(entity.LoadStateNotLoad, nil).Build()
+
+			// 模拟描述索引返回空列表
+			Mock(GetMethod(mockClient, "DescribeIndex")).Return([]entity.Index{}, nil).Build()
+
+			// 模拟创建索引失败
+			Mock(GetMethod(mockClient, "CreateIndex")).Return(fmt.Errorf("create index error")).Build()
+
+			err := mockConf.loadCollection(ctx)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "[NewIndexer] failed to create index")
+		})
+
+		PatchConvey("test load collection when load state is LoadStateNotLoad and load collection failed", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(ctx, client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Collection: defaultCollection,
+			}
+
+			// 模拟获取加载状态返回LoadStateNotLoad
+			Mock(GetMethod(mockClient, "GetLoadState")).Return(entity.LoadStateNotLoad, nil).Build()
+
+			// 模拟描述索引返回已有索引
+			Mock(GetMethod(mockClient, "DescribeIndex")).Return([]entity.Index{
+				entity.NewGenericIndex("vector", entity.AUTOINDEX, nil),
+			}, nil).Build()
+
+			// 模拟加载集合失败
+			Mock(GetMethod(mockClient, "LoadCollection")).Return(fmt.Errorf("load collection error")).Build()
+
+			err := mockConf.loadCollection(ctx)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldEqual, "load collection error")
+		})
+
+		PatchConvey("test load collection when load state is LoadStateLoading and loading success", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(ctx, client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Collection: defaultCollection,
+			}
+
+			// 模拟获取加载状态返回LoadStateLoading
+			Mock(GetMethod(mockClient, "GetLoadState")).Return(entity.LoadStateLoading, nil).Build()
+
+			// 模拟获取加载进度，第一次返回50，第二次返回100
+			callCount := 0
+			Mock(GetMethod(mockClient, "GetLoadingProgress")).To(func(ctx context.Context, collectionName string, partitionNames []string) (int64, error) {
+				callCount++
+				if callCount == 1 {
+					return 50, nil
+				}
+				return 100, nil
+			}).Build()
+
+			err := mockConf.loadCollection(ctx)
+			convey.So(err, convey.ShouldBeNil)
+		})
+
+		PatchConvey("test load collection when load state is LoadStateLoading and get loading progress failed", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(ctx, client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Collection: defaultCollection,
+			}
+
+			// 模拟获取加载状态返回LoadStateLoading
+			Mock(GetMethod(mockClient, "GetLoadState")).Return(entity.LoadStateLoading, nil).Build()
+
+			// 模拟获取加载进度失败
+			Mock(GetMethod(mockClient, "GetLoadingProgress")).Return(int64(0), fmt.Errorf("get loading progress error")).Build()
+
+			err := mockConf.loadCollection(ctx)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldEqual, "get loading progress error")
+		})
+
+		PatchConvey("test load collection when load state is LoadStateLoaded", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(ctx, client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Collection: defaultCollection,
+			}
+
+			// 模拟获取加载状态返回LoadStateLoaded
+			Mock(GetMethod(mockClient, "GetLoadState")).Return(entity.LoadStateLoaded, nil).Build()
+
+			err := mockConf.loadCollection(ctx)
+			convey.So(err, convey.ShouldBeNil)
+		})
+
+		PatchConvey("test load collection when get load state failed", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(ctx, client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Collection: defaultCollection,
+			}
+
+			// 模拟获取加载状态失败
+			Mock(GetMethod(mockClient, "GetLoadState")).Return(entity.LoadStateNotLoad, fmt.Errorf("get load state error")).Build()
+
+			err := mockConf.loadCollection(ctx)
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldContainSubstring, "[NewIndexer] failed to get load state")
+		})
+	})
+}
+
+func TestIndexer_check(t *testing.T) {
+	PatchConvey("test check", t, func() {
+
+		PatchConvey("test client not provided", func() {
+			mockConf := &IndexerConfig{
+				Client: nil,
+			}
+
+			err := mockConf.check()
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldEqual, "[NewIndexer] milvus client not provided")
+		})
+
+		PatchConvey("test embedding not provided", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(context.Background(), client.Config{})
+
+			mockConf := &IndexerConfig{
+				Client:    mockClient,
+				Embedding: nil,
+			}
+
+			err := mockConf.check()
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldEqual, "[NewIndexer] embedding not provided")
+		})
+
+		PatchConvey("test partition num larger than 1 and partition name provided", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(context.Background(), client.Config{})
+			mockEmb := &mockEmbedding{}
+
+			mockConf := &IndexerConfig{
+				Client:        mockClient,
+				Embedding:     mockEmb,
+				PartitionNum:  2,
+				PartitionName: "_default",
+			}
+
+			err := mockConf.check()
+			convey.So(err, convey.ShouldNotBeNil)
+			convey.So(err.Error(), convey.ShouldEqual, "[NewIndexer] not support manually specifying the partition names if partition key mode is used")
+		})
+
+		PatchConvey("test collection not provided", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(context.Background(), client.Config{})
+			mockEmb := &mockEmbedding{}
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Embedding:  mockEmb,
+				Collection: "",
+			}
+
+			err := mockConf.check()
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(mockConf.Collection, convey.ShouldEqual, defaultCollection)
+		})
+
+		PatchConvey("test description not provided", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(context.Background(), client.Config{})
+			mockEmb := &mockEmbedding{}
+
+			mockConf := &IndexerConfig{
+				Client:      mockClient,
+				Embedding:   mockEmb,
+				Description: "",
+			}
+
+			err := mockConf.check()
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(mockConf.Description, convey.ShouldEqual, defaultDescription)
+		})
+
+		PatchConvey("test shared num less than or equal to 0", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(context.Background(), client.Config{})
+			mockEmb := &mockEmbedding{}
+
+			mockConf := &IndexerConfig{
+				Client:    mockClient,
+				Embedding: mockEmb,
+				SharedNum: 0,
+			}
+
+			err := mockConf.check()
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(mockConf.SharedNum, convey.ShouldEqual, 1)
+		})
+
+		PatchConvey("test consistency level out of range", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(context.Background(), client.Config{})
+			mockEmb := &mockEmbedding{}
+
+			mockConf := &IndexerConfig{
+				Client:           mockClient,
+				Embedding:        mockEmb,
+				ConsistencyLevel: 6, // 超出有效范围1-5
+			}
+
+			err := mockConf.check()
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(mockConf.ConsistencyLevel, convey.ShouldEqual, defaultConsistencyLevel)
+		})
+
+		PatchConvey("test consistency level less than or equal to 0", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(context.Background(), client.Config{})
+			mockEmb := &mockEmbedding{}
+
+			mockConf := &IndexerConfig{
+				Client:           mockClient,
+				Embedding:        mockEmb,
+				ConsistencyLevel: 0,
+			}
+
+			err := mockConf.check()
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(mockConf.ConsistencyLevel, convey.ShouldEqual, defaultConsistencyLevel)
+		})
+
+		PatchConvey("test metric type not provided", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(context.Background(), client.Config{})
+			mockEmb := &mockEmbedding{}
+
+			mockConf := &IndexerConfig{
+				Client:     mockClient,
+				Embedding:  mockEmb,
+				MetricType: "",
+			}
+
+			err := mockConf.check()
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(mockConf.MetricType, convey.ShouldEqual, defaultMetricType)
+		})
+
+		PatchConvey("test partition num less than or equal to 1", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(context.Background(), client.Config{})
+			mockEmb := &mockEmbedding{}
+
+			mockConf := &IndexerConfig{
+				Client:       mockClient,
+				Embedding:    mockEmb,
+				PartitionNum: 1,
+			}
+
+			err := mockConf.check()
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(mockConf.PartitionNum, convey.ShouldEqual, 0)
+		})
+
+		PatchConvey("test fields not provided", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(context.Background(), client.Config{})
+			mockEmb := &mockEmbedding{}
+
+			mockConf := &IndexerConfig{
+				Client:    mockClient,
+				Embedding: mockEmb,
+				Fields:    nil,
+			}
+
+			err := mockConf.check()
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(mockConf.Fields, convey.ShouldResemble, getDefaultFields())
+		})
+
+		PatchConvey("test document converter not provided", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(context.Background(), client.Config{})
+			mockEmb := &mockEmbedding{}
+
+			mockConf := &IndexerConfig{
+				Client:            mockClient,
+				Embedding:         mockEmb,
+				DocumentConverter: nil,
+			}
+
+			err := mockConf.check()
+			convey.So(err, convey.ShouldBeNil)
+			convey.So(mockConf.DocumentConverter, convey.ShouldNotBeNil)
+		})
+
+		PatchConvey("test all valid config", func() {
+			Mock(client.NewClient).Return(&client.GrpcClient{}, nil).Build()
+			mockClient, _ := client.NewClient(context.Background(), client.Config{})
+			mockEmb := &mockEmbedding{}
+
+			mockConf := &IndexerConfig{
+				Client:           mockClient,
+				Embedding:        mockEmb,
+				Collection:       "test_collection",
+				Description:      "test description",
+				SharedNum:        2,
+				ConsistencyLevel: ConsistencyLevel(3),
+				MetricType:       L2,
+				PartitionNum:     0,
+				Fields:           getDefaultFields(),
+			}
+
+			err := mockConf.check()
+			convey.So(err, convey.ShouldBeNil)
+		})
+	})
+}
